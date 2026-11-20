@@ -3,7 +3,7 @@
 
 services:
   ts6:
-    image: ghcr.io/uniskela/ts6-manager/all-in-one:latest
+    image: ghcr.io/inmortalis/ts6-manager/all-in-one:latest
     build:
       context: .
       dockerfile: Dockerfile.all-in-one

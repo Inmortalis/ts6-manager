@@ -5,7 +5,7 @@
 
 > [!IMPORTANT]
 > **This is an opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager), not a mirror or drop-in republish of upstream.**
-> Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`).
+> Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/inmortalis/ts6-manager/...`).
 > Community issue/PR credits: [`CREDITS.md`](CREDITS.md) (including [fork contributions](CREDITS.md#fork-contributions)).
 
 Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets — all from your browser.
@@ -22,7 +22,7 @@ The maintained public documentation is available at **[uniskela.com/docs/ts6-man
 
 Start with:
 
-- [Installation](https://uniskela.com/docs/ts6-manager/installation/)
+- [Installation](docs/installation.md)
 - [Configuration](https://uniskela.com/docs/ts6-manager/configuration/)
 - [Upgrading](https://uniskela.com/docs/ts6-manager/upgrading/)
 - [TeamSpeak compatibility](https://uniskela.com/docs/ts6-manager/teamspeak-compatibility/)
@@ -190,12 +190,12 @@ Prebuilt images are published to **GitHub Container Registry** only for immutabl
 
 | Service  | Image |
 |----------|--------|
-| Backend  | `ghcr.io/uniskela/ts6-manager/backend:latest` |
-| Frontend | `ghcr.io/uniskela/ts6-manager/frontend:latest` |
-| Sidecar  | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
-| All-in-one | `ghcr.io/uniskela/ts6-manager/all-in-one:latest` |
+| Backend  | `ghcr.io/inmortalis/ts6-manager/backend:latest` |
+| Frontend | `ghcr.io/inmortalis/ts6-manager/frontend:latest` |
+| Sidecar  | `ghcr.io/inmortalis/ts6-manager/sidecar:latest` |
+| All-in-one | `ghcr.io/inmortalis/ts6-manager/all-in-one:latest` |
 
-Pull without logging in once the packages are **Public** (Packages → each image → Package settings). The workflow tries to set that automatically after the first publish.
+Public GHCR images allow anonymous pulls. For first-time release setup or private package access, see [Release setup for fork maintainers](docs/installation.md#release-setup-for-fork-maintainers).
 
 ### Split stack (default)
 
@@ -245,7 +245,7 @@ Runs nginx + backend + sidecar in one image (adapted from upstream [PR #64](http
 ```bash
 # Same .env secrets as above
 docker compose -f docker-compose.all-in-one.yml up -d
-# or: docker pull ghcr.io/uniskela/ts6-manager/all-in-one:latest
+# or: docker pull ghcr.io/inmortalis/ts6-manager/all-in-one:latest
 ```
 
 Open `http://localhost:3000` (override with `HOST_PORT`). Only port 80 is published; backend and sidecar stay on loopback inside the container.
@@ -255,7 +255,7 @@ Open `http://localhost:3000` (override with `HOST_PORT`). Only port 80 is publis
 **Full local stack with TeamSpeak 6 (beta13)** — preferred happy path:
 
 ```bash
-git clone https://github.com/uniskela/ts6-manager.git
+git clone https://github.com/Inmortalis/ts6-manager.git
 cd ts6-manager
 cp .env.pr-test.example .env
 docker compose -f docker-compose.pr-test.yml up --build
