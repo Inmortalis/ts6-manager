@@ -270,7 +270,13 @@ describe('client moderation audit instrumentation', () => {
       assert.equal(rows[0].targetId, '55');
       assert.equal(JSON.stringify(rows).includes(SECRET), false);
       assert.equal(JSON.stringify(rows).includes('permsid'), false);
-      assert.equal(JSON.stringify(rows).includes('999'), false);
+      // Numeric substrings can occur in timestamps and random operation IDs.
+      for (const row of rows) {
+        assert.equal('permsid' in row, false);
+        assert.equal('permvalue' in row, false);
+        assert.equal('permid' in row, false);
+      }
+      assert.doesNotMatch(JSON.stringify(rows), /[:,\[](?:999|"999")(?=[,}\]])/);
     } finally {
       await close();
     }

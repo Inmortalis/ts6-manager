@@ -1,19 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { downloadYouTube } from './youtube.js';
 
-test('download pipeline emits structured subprocess progress and ignores abandoned partial cache', async () => {
+test('download pipeline emits structured subprocess progress and ignores abandoned partial cache', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ts6-progress-'));
-  const previousPath = process.env.PATH;
+  const executable = path.join(dir, 'fake-yt-dlp.cjs');
+  const spawn = childProcess.spawn;
+  const spawnMock = t.mock.method(childProcess, 'spawn', (...args: Parameters<typeof spawn>) => {
+    if (args[0] !== 'yt-dlp') return spawn(...args);
+    return spawn(process.execPath, [executable, ...args[1]], args[2]);
+  });
+  syncBuiltinESMExports();
   const updates: any[] = [];
   try {
-    const executable = path.join(dir, 'yt-dlp');
-    await writeFile(executable, `#!/usr/bin/env node
-const fs = require('node:fs');
-const path = require('node:path');
+    await writeFile(executable, `const fs = require('node:fs');
 const args = process.argv.slice(2);
 if (args.at(-2) !== '--') process.exit(9);
 if (args.includes('--dump-json')) {
@@ -29,8 +34,6 @@ if (args.includes('--dump-json')) {
   }, 10);
 }
 `);
-    await chmod(executable, 0o755);
-    process.env.PATH = `${dir}${path.delimiter}${previousPath}`;
     await writeFile(path.join(dir, 'abcdefghijk.webm.part'), 'unfinished');
     const result = await downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, p => updates.push(p));
     assert.equal(path.extname(result.filePath), '.opus');
@@ -39,7 +42,8 @@ if (args.includes('--dump-json')) {
     const cached = await downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, () => assert.fail('cached file should not download'));
     assert.equal(cached.filePath, result.filePath);
   } finally {
-    process.env.PATH = previousPath;
+    spawnMock.mock.restore();
+    syncBuiltinESMExports();
     await rm(dir, { recursive: true, force: true });
   }
 });

@@ -3,3 +3,4 @@ Dockerfile* text eol=lf
 docker-compose*.yml text eol=lf
 *.yaml text eol=lf
 *.conf text eol=lf
+packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt text eol=lf
