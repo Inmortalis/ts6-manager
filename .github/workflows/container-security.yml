@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/container-security.yml'
+      - '.github/workflows/publish-images.yml'
       - '.gitattributes'
       - '.yt-dlp-version'
       - 'Dockerfile.backend'
@@ -25,6 +26,7 @@ on:
       - main
     paths:
       - '.github/workflows/container-security.yml'
+      - '.github/workflows/publish-images.yml'
       - '.gitattributes'
       - '.yt-dlp-version'
       - 'Dockerfile.backend'

@@ -14,8 +14,8 @@ RUN pnpm --filter @ts6/frontend run build
 # Production: serve with nginx
 FROM nginx:alpine AS production
 
-# Alpine libexpat fix for Trivy HIGH (CVE-2026-93990 → 2.8.5-r0+)
-RUN apk upgrade --no-cache libexpat
+# Pick up Alpine security updates for the XML parsers shipped by nginx.
+RUN apk upgrade --no-cache libexpat libxml2
 
 COPY --from=build /app/packages/frontend/dist /usr/share/nginx/html
 

@@ -221,27 +221,30 @@ export class ExecutionContext {
     });
   }
 
-  private async updateVariable(name: string, transform: (current: string) => string): Promise<void> {
-    const key = { flowId: this.flowId, name, scope: 'flow' };
-    await this.prisma.$transaction(async tx => {
-      // Acquire the SQLite write lock before using the old value, including on first use.
-      const row = await tx.botVariable.upsert({
-        where: { flowId_name_scope: key },
-        create: { ...key, value: '' },
-        update: { name },
-        select: { id: true, value: true },
-      });
-      await tx.botVariable.update({ where: { id: row.id }, data: { value: transform(row.value) } });
-    });
-  }
-
   async incrementVariable(name: string, amount: string): Promise<void> {
     const increment = parseFloat(amount) || 0;
-    await this.updateVariable(name, current => String((parseFloat(current) || 0) + increment));
+    for (;;) {
+      const previous = await this.getVariable(name);
+      const next = String((parseFloat(previous) || 0) + increment);
+      // Preserve JavaScript's numeric parsing and formatting for stored strings.
+      // On a concurrent update, read the winner's value and apply this increment again.
+      const changed = await this.prisma.$executeRaw`
+        INSERT INTO "BotVariable" ("flowId", "name", "scope", "value")
+        VALUES (${this.flowId}, ${name}, 'flow', ${String(increment)})
+        ON CONFLICT ("flowId", "name", "scope") DO UPDATE SET "value" = ${next}
+        WHERE "BotVariable"."value" = ${previous}
+      `;
+      if (changed === 1) return;
+    }
   }
 
   async appendVariable(name: string, value: string): Promise<void> {
-    await this.updateVariable(name, current => current + value);
+    await this.prisma.$executeRaw`
+      INSERT INTO "BotVariable" ("flowId", "name", "scope", "value")
+      VALUES (${this.flowId}, ${name}, 'flow', ${value})
+      ON CONFLICT ("flowId", "name", "scope") DO UPDATE
+      SET "value" = "BotVariable"."value" || excluded."value"
+    `;
   }
 
   setTemp(name: string, value: any): void {
