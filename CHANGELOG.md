@@ -2,6 +2,14 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.5](https://github.com/Inmortalis/ts6-manager/compare/v1.8.4...v1.8.5) (2026-11-20)
+
+
+### Bug Fixes
+
+* backport session, channel and media fixes and resolve runtime errors ([#1](https://github.com/Inmortalis/ts6-manager/issues/1)) ([1a3c59d](https://github.com/Inmortalis/ts6-manager/commit/1a3c59da6eb382ff1ea83b73ecc6fe53c4fbda8a))
+* **deploy:** publish and pull container images from the fork ([#2](https://github.com/Inmortalis/ts6-manager/issues/2)) ([a190b1c](https://github.com/Inmortalis/ts6-manager/commit/a190b1cfe23f601ab8548e80bc4f5259ecf528dc))
+
 ## [1.8.4](https://github.com/uniskela/ts6-manager/compare/v1.8.3...v1.8.4) (2026-09-27)
 
 
