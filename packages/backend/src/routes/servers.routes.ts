@@ -3,6 +3,7 @@ import { requireRole } from '../middleware/rbac.js';
 import { AppError, TeamSpeakFloodError } from '../middleware/error-handler.js';
 import { createWebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
+import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { testSshConnection } from '../utils/ssh-test.js';
 import { reloadEnabledServerFlows } from './server-connection-refresh.js';
@@ -335,6 +336,8 @@ serverRoutes.delete('/:configId', requireRole('admin'), async (req: Request, res
 
     const pool: ConnectionPool = req.app.locals.connectionPool;
     pool.removeClient(id);
+    const manager: VoiceBotManager | undefined = req.app.locals.voiceBotManager;
+    await manager?.detachServer(id);
 
     res.status(204).send();
   } catch (err) { next(err); }

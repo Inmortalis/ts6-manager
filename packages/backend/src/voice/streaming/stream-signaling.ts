@@ -44,7 +44,14 @@ export class StreamSignaling extends EventEmitter {
   constructor(client: Ts3Client) {
     super();
     this.client = client;
-    this.client.on('command', (parsed: any) => this.handleCommand(parsed));
+    this.client.on('command', this.onCommand);
+  }
+
+  private readonly onCommand = (parsed: any): void => this.handleCommand(parsed);
+
+  dispose(): void {
+    this.client.off('command', this.onCommand);
+    this.removeAllListeners();
   }
 
   getActiveStreams(): Map<string, ActiveStream> {

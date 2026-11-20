@@ -6,6 +6,9 @@
 
 import { useState } from 'react';
 import { VideoPlayer } from './VideoPlayer';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { useStreamTakeover } from '@/hooks/use-stream-takeover';
+import { apiErrorMessage } from '@/lib/api-error';
 import {
   useVideoStreamStatus,
   useStartVideoStream,
@@ -56,16 +59,15 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
   const isStreaming = streamStatus?.streaming ?? false;
   const isBotConnected = botStatus === 'connected' || botStatus === 'playing' || botStatus === 'paused';
 
+  const takeover = useStreamTakeover(JSON.stringify([botId, isBotConnected, sourceUrl, preset, framerate, bitrate, streamVolume]));
+
   const handleStart = () => {
     if (!sourceUrl.trim()) return;
-    startStream.mutate({
-      botId,
-      source: sourceUrl.trim(),
-      preset,
-      framerate: Number(framerate),
-      bitrate: bitrate.trim(),
-      volume: streamVolume,
-    });
+    void takeover.start(`the selected video on bot #${botId}`, (replaceSessionId, signal) =>
+      startStream.mutateAsync({
+        botId, source: sourceUrl.trim(), preset, framerate: Number(framerate),
+        bitrate: bitrate.trim(), volume: streamVolume, replaceSessionId, signal,
+      }));
   };
 
   const handleStop = () => {
@@ -89,6 +91,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
 
   return (
     <div className="space-y-4">
+      <ConfirmDialog {...takeover.dialog} />
       {/* Stream Controls */}
       <Card>
         <CardHeader className="pb-3">
@@ -122,7 +125,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                     placeholder="https://youtube.com/watch?v=... or direct video URL"
                     value={sourceUrl}
                     onChange={(e) => setSourceUrl(e.target.value)}
-                    disabled={startStream.isPending}
+                    disabled={takeover.pending}
                   />
                   {isStreaming ? (
                     <Button
@@ -222,9 +225,9 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                 {!isStreaming ? (
                   <Button
                     onClick={handleStart}
-                    disabled={!sourceUrl.trim() || startStream.isPending}
+                    disabled={!sourceUrl.trim() || takeover.pending}
                   >
-                    {startStream.isPending ? 'Starting...' : 'Start Stream'}
+                    {takeover.pending ? 'Starting...' : 'Start Stream'}
                   </Button>
                 ) : (
                   <Button
@@ -237,11 +240,9 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                 )}
               </div>
 
-              {(startStream.isError || stopStream.isError || setSource.isError) && (
-                <p className="text-sm text-red-500">
-                  {(startStream.error as any)?.message ||
-                    (stopStream.error as any)?.message ||
-                    (setSource.error as any)?.message}
+              {(takeover.error || stopStream.isError || setSource.isError) && (
+                <p role="alert" className="text-sm text-red-500">
+                  {takeover.error || apiErrorMessage(stopStream.error || setSource.error, 'Stream operation failed')}
                 </p>
               )}
             </>

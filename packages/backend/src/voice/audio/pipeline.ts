@@ -15,6 +15,9 @@ export function buildPcmFileArgs(filePath: string, startSeconds = 0): string[] {
   if (startSeconds > 0) {
     args.push("-ss", startSeconds.toFixed(3));
   }
+  if (/^https?:\/\//i.test(filePath)) {
+    args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
+  }
   args.push(
     "-re",
     "-i", filePath,
@@ -65,7 +68,18 @@ export class AudioPipeline {
     filePath: string,
     startSeconds = 0,
   ): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+    if (/^https?:\/\//i.test(filePath)) {
+      const urlCheck = await validateUrl(filePath, { allowedProtocols: ['http:', 'https:'] });
+      if (!urlCheck.valid) throw new Error(`Stream URL blocked: ${urlCheck.error}`);
+    }
     const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(filePath, startSeconds), { shell: false });
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg.once('error', reject);
+      ffmpeg.once('spawn', () => {
+        ffmpeg.off('error', reject);
+        resolve();
+      });
+    });
     return {
       stdout: ffmpeg.stdout,
       process: ffmpeg,

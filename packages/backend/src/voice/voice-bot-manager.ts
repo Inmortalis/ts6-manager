@@ -246,6 +246,9 @@ export class VoiceBotManager extends EventEmitter {
       typeof value === 'bigint' ? value.toString() : value
     ));
 
+    // Register the live bot immediately after insertion so a concurrent connection
+    // deletion cannot finish teardown between the insert and registration.
+    const maxVideoDurationSec = await loadMaxVideoDuration(this.prisma);
     const dbBot = await this.prisma.musicBot.create({
       data: {
         name: data.name,
@@ -278,7 +281,7 @@ export class VoiceBotManager extends EventEmitter {
       sidecarBinaryPath: process.env.SIDECAR_BINARY_PATH,
       sidecarPort: 9800,
       streamPreset: '720p',
-      maxVideoDurationSec: await loadMaxVideoDuration(this.prisma),
+      maxVideoDurationSec,
       autoStopEmptySeconds: parseInt(process.env.BOT_AUTO_STOP_EMPTY_SECONDS ?? '300', 10) || 300,
     };
 
@@ -336,6 +339,20 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   async removeBot(id: number): Promise<void> {
+    await this.detachBot(id);
+    await this.prisma.musicBot.delete({ where: { id } });
+  }
+
+  /** Connection deletion has already cascaded the database rows. Release the live clients. */
+  async detachServer(configId: number): Promise<void> {
+    const pending: Promise<void>[] = [];
+    for (const [id, owner] of this.botServerConfigIds) {
+      if (owner === configId) pending.push(this.detachBot(id));
+    }
+    await Promise.all(pending);
+  }
+
+  private async detachBot(id: number): Promise<void> {
     this.clearReconnect(id);
     this.stopProgressBroadcast(id);
     this.identityJobs.delete(id);
@@ -343,16 +360,15 @@ export class VoiceBotManager extends EventEmitter {
 
     const bot = this.bots.get(id);
     if (bot) {
+      this.bots.delete(id);
       try {
         await bot.stop();
       } catch (err: any) {
         console.warn(`[VoiceBotManager] stop during removeBot ${id}: ${err.message}`);
       }
       bot.ensureDisconnected();
-      this.bots.delete(id);
       this.botServerConfigIds.delete(id);
     }
-    await this.prisma.musicBot.delete({ where: { id } });
   }
 
   async getBotsForServer(configId: number): Promise<Array<{ botId: number; bot: VoiceBot }>> {

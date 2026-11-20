@@ -2035,7 +2035,7 @@ export class MusicCommandHandler {
 
     const alreadyPlaying = bot.status === 'playing' || bot.status === 'paused';
     if (!alreadyPlaying) {
-      bot.queue.playAt(bot.queue.length - 1);
+      bot.queue.selectItem(firstItem);
       await bot.play(firstItem);
     }
 
@@ -2083,8 +2083,7 @@ export class MusicCommandHandler {
         stillLive.queue.add(queueItem);
         this.saveMusicRequest(stillLive, queueItem);
 
-        if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
-          stillLive.queue.playAt(stillLive.queue.length - 1);
+        if (stillLive.status === 'connected' && !stillLive.nowPlaying && stillLive.queue.selectItem(queueItem)) {
           await stillLive.play(queueItem).catch((err) => {
             console.error('[MusicCmd] Failed to resume playlist playback:', err);
           });

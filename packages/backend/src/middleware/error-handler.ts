@@ -11,6 +11,14 @@ export class AppError extends Error {
   }
 }
 
+export class VideoSessionConflictError extends AppError {
+  constructor(public activeSession?: { id: string; botId: number; botName: string }) {
+    super(409, activeSession ? `Video sidecar is in use by ${activeSession.botName}` : 'Video sidecar session changed or is busy', activeSession
+      ? 'Confirm replacing the active video stream or stop it first.'
+      : 'The stream changed or is starting or stopping. Check its status and try again.');
+  }
+}
+
 export class TSApiError extends Error {
   constructor(
     public code: number,
@@ -174,6 +182,13 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
       details: err.details,
       code: err.tsCode,
       reason: 'ts_permission_denied',
+    });
+    return;
+  }
+
+  if (err instanceof VideoSessionConflictError) {
+    res.status(409).json({
+      error: err.message, details: err.details, reason: 'video_session_conflict', activeSession: err.activeSession,
     });
     return;
   }

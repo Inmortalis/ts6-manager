@@ -10,6 +10,7 @@ import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { useStreamTakeover } from '@/hooks/use-stream-takeover';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
@@ -74,23 +75,22 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
   const [botId, setBotId] = useState<string>('');
   const [preset, setPreset] = useState('720p');
 
+  const selectedBot = eligibleBots.find(bot => String(bot.id) === botId);
   useEffect(() => {
-    if (!botId && eligibleBots.length > 0) setBotId(String(eligibleBots[0].id));
-  }, [eligibleBots, botId]);
+    if (!selectedBot) setBotId(eligibleBots[0] ? String(eligibleBots[0].id) : '');
+  }, [eligibleBots, selectedBot]);
+  const takeover = useStreamTakeover(JSON.stringify([playlist.id, playlist.serverConfigId, selectedBot?.id, preset]));
 
   const channels: IptvChannelInfo[] = data?.channels ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const doStream = (channel: IptvChannelInfo) => {
-    if (!botId) { toast.error('Select a running music bot to stream through'); return; }
-    stream.mutate(
-      { botId: parseInt(botId), channelId: channel.id, preset },
-      {
-        onSuccess: () => toast.success(`Streaming: ${channel.name}`),
-        onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to start stream'),
-      },
-    );
+    if (!selectedBot || channel.playlistId !== playlist.id) return;
+    const request = { botId: Number(selectedBot.id), channelId: channel.id, preset };
+    void takeover.start(`${channel.name} on ${selectedBot.name}`,
+      (replaceSessionId, signal) => stream.mutateAsync({ ...request, replaceSessionId, signal }),
+      () => toast.success(`Streaming: ${channel.name}`));
   };
 
   return (
@@ -99,6 +99,8 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
         focus={['sidecar', 'ffmpeg', 'yt-dlp']}
         showPrerequisite
       />
+      <ConfirmDialog {...takeover.dialog} />
+      {takeover.error && <p role="alert" className="text-sm text-destructive">{takeover.error}</p>}
       {/* Streamer controls */}
       <div className="flex flex-wrap items-end gap-2 rounded-md border p-2.5">
         <div className="space-y-1">
@@ -126,6 +128,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
             variant="outline"
             size="sm"
             className="h-8 text-xs"
+            disabled={takeover.pending || stop.isPending || !selectedBot}
             onClick={() => stop.mutate(parseInt(botId), { onSuccess: () => toast.success('Stream stopped') })}
           >
             <Square className="h-3.5 w-3.5 mr-1" /> Stop
@@ -184,7 +187,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
                 variant="ghost"
                 className="h-7 w-7 shrink-0"
                 onClick={() => doStream(c)}
-                disabled={stream.isPending || !botId}
+                disabled={takeover.pending || !selectedBot || c.playlistId !== playlist.id}
                 aria-label={`Stream ${c.name}`}
               >
                 <Play className="h-3.5 w-3.5" />

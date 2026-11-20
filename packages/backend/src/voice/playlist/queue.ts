@@ -121,6 +121,11 @@ export class PlayQueue {
     return this.current;
   }
 
+  /** Select the exact queued object, including when shuffle changed its displayed position. */
+  selectItem(item: QueueItem): boolean {
+    return this.playAt(this.getAll().indexOf(item)) !== null;
+  }
+
   playAt(index: number): QueueItem | null {
     if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return null;
     this.currentIndex = index;

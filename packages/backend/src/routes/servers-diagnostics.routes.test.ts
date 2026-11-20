@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import express, { type Express } from 'express';
 import { serverRoutes } from './servers.routes.js';
+import { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { errorHandler, TeamSpeakFloodError } from '../middleware/error-handler.js';
 import type { ConnectionDiagnosticReport } from '../ts-client/connection-diagnostics.js';
 
@@ -152,6 +153,42 @@ describe('servers staged WebQuery diagnostics routes', () => {
       assert.equal(response.status, 400);
       const body = await response.json() as { error?: string };
       assert.match(String(body.error), /api key/i);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe('deleting a connection with live bots', () => {
+  it('stops and disconnects only bots owned by the deleted connection', async () => {
+    const stopped: number[] = [];
+    const disconnected: number[] = [];
+    const deleted: number[] = [];
+    const tx = {
+      tsServerConfig: { delete: async ({ where }: { where: { id: number } }) => deleted.push(where.id) },
+      adminAuditEvent: { create: async () => ({}) },
+    };
+    const prisma = { $transaction: (run: (client: typeof tx) => Promise<void>) => run(tx) };
+    const manager = new VoiceBotManager(prisma as any, { clients: new Set() } as any);
+    for (const [id, owner] of [[1, 7], [2, 9], [3, 7]]) {
+      (manager as any).bots.set(id, {
+        stop: async () => { assert.deepEqual(deleted, [7]); stopped.push(id); },
+        ensureDisconnected: () => disconnected.push(id),
+      });
+      (manager as any).botServerConfigIds.set(id, owner);
+    }
+    const app = buildApp({
+      locals: { prisma, voiceBotManager: manager, connectionPool: { removeClient: () => {} } },
+    });
+    const { base, close } = await listen(app);
+    try {
+      const response = await fetch(`${base}/api/servers/7`, { method: 'DELETE' });
+      assert.equal(response.status, 204);
+      assert.deepEqual(stopped.sort(), [1, 3]);
+      assert.deepEqual(disconnected.sort(), [1, 3]);
+      assert.equal(manager.getBot(1), undefined);
+      assert.equal(manager.getBot(3), undefined);
+      assert.ok(manager.getBot(2));
     } finally {
       await close();
     }
