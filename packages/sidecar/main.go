@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -927,21 +928,31 @@ func (s *Sidecar) ClosePeer(id string) {
 	s.peersLock.Unlock()
 }
 
-func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string, volume int, loop bool) {
+var errSidecarPeersPresent = errors.New("sidecar still has existing or pending viewers")
+
+func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string, volume int, loop bool, requireEmptyPeers bool) error {
 	s.ffmpegLock.Lock()
 	defer s.ffmpegLock.Unlock()
 
 	if err := validSource(source); err != nil {
-		log.Printf("[FFmpeg] Rejected source: %v", err)
-		return
+		return err
+	}
+	if requireEmptyPeers {
+		// CreatePeer registers under this lock before gathering ICE, and publishes
+		// its peer under the same lock. Keep it until the new encoder starts.
+		s.peersLock.RLock()
+		defer s.peersLock.RUnlock()
+		if len(s.peers) != 0 || len(s.creating) != 0 {
+			return errSidecarPeersPresent
+		}
 	}
 
 	s.StopFFmpegLocked()
 	s.resetSyncTiming()
 	s.drainRTPQueues()
-	s.resetPeerStreamState()
-
-	s.source = source
+	if !requireEmptyPeers {
+		s.resetPeerStreamState()
+	}
 
 	w := width
 	h := height
@@ -1049,15 +1060,16 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 	cmd.Stdout = nil
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		log.Printf("[FFmpeg] Start error: %v", err)
-		return
+		return err
 	}
 	s.ffmpeg = cmd
+	s.source = source
 
 	go func() {
 		err := cmd.Wait()
 		log.Printf("[FFmpeg] Exited: %v", err)
 	}()
+	return nil
 }
 
 func (s *Sidecar) StopFFmpegLocked() {
@@ -1068,23 +1080,30 @@ func (s *Sidecar) StopFFmpegLocked() {
 }
 
 func (s *Sidecar) GetStats() map[string]interface{} {
+	s.ffmpegLock.Lock()
+	defer s.ffmpegLock.Unlock()
 	s.peersLock.RLock()
 	defer s.peersLock.RUnlock()
 
 	peers := map[string]interface{}{}
 	for id, peer := range s.peers {
+		peer.mu.Lock()
+		active := peer.Active
+		peer.mu.Unlock()
 		peers[id] = map[string]interface{}{
-			"active": peer.Active,
+			"active": active,
 			"state":  peer.PC.ICEConnectionState().String(),
 		}
 	}
 
 	return map[string]interface{}{
-		"videoPort": s.videoPort,
-		"audioPort": s.audioPort,
-		"peerCount": len(s.peers),
-		"peers":     peers,
-		"source":    s.source,
+		"videoPort":              s.videoPort,
+		"audioPort":              s.audioPort,
+		"peerCount":              len(s.peers),
+		"pendingPeerCount":       len(s.creating),
+		"supportsEmptyPeerGuard": true,
+		"peers":                  peers,
+		"source":                 s.source,
 	}
 }
 
@@ -1220,12 +1239,13 @@ func main() {
 
 	mux.HandleFunc("POST /source", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Source    string `json:"source"`
-			Width     int    `json:"width"`
-			Height    int    `json:"height"`
-			Framerate int    `json:"framerate"`
-			Bitrate   string `json:"bitrate"`
-			Volume    *int   `json:"volume"`
+			Source            string `json:"source"`
+			Width             int    `json:"width"`
+			Height            int    `json:"height"`
+			Framerate         int    `json:"framerate"`
+			Bitrate           string `json:"bitrate"`
+			Volume            *int   `json:"volume"`
+			RequireEmptyPeers bool   `json:"requireEmptyPeers"`
 			// Loop defaults to true (prior behavior for local backgrounds) when omitted;
 			// the backend sets false for on-demand downloaded clips.
 			Loop *bool `json:"loop"`
@@ -1250,7 +1270,15 @@ func main() {
 		}
 		loop := req.Loop == nil || *req.Loop
 		log.Printf("[API] Setting source: %s (%dx%d @ %dfps vol=%d loop=%v)", req.Source, req.Width, req.Height, req.Framerate, vol, loop)
-		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate, vol, loop)
+		if err := sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate, vol, loop, req.RequireEmptyPeers); err != nil {
+			if errors.Is(err, errSidecarPeersPresent) {
+				http.Error(w, err.Error(), http.StatusConflict)
+			} else {
+				log.Printf("[FFmpeg] Start error: %v", err)
+				http.Error(w, "could not start encoder", http.StatusBadGateway)
+			}
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 

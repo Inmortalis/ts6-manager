@@ -248,7 +248,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
 
     // Add to queue so repeat modes work, then play
     bot.queue.add(queueItem);
-    bot.queue.playAt(bot.queue.length - 1);
+    bot.queue.selectItem(queueItem);
     await bot.play(queueItem);
 
     res.json({ success: true });
@@ -361,7 +361,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       sourceUrl: firstUrl,
     };
     bot.queue.add(firstItem);
-    bot.queue.playAt(bot.queue.length - 1);
+    bot.queue.selectItem(firstItem);
     await bot.play(firstItem);
     await saveHistory(firstUrl, firstItem.title);
 
@@ -394,8 +394,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
           await saveHistory(itemUrl, queueItem.title);
 
           // First track may have finished while we were downloading — resume from this item.
-          if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
-            stillLive.queue.playAt(stillLive.queue.length - 1);
+          if (stillLive.status === 'connected' && !stillLive.nowPlaying && stillLive.queue.selectItem(queueItem)) {
             await stillLive.play(queueItem).catch((err) => {
               console.error('[music-bots.routes] Failed to resume playlist playback:', err);
             });
@@ -546,7 +545,7 @@ musicBotRoutes.post('/:id/seek', async (req: Request, res: Response, next) => {
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
     const { seconds } = req.body;
-    bot.seek(parseFloat(seconds) || 0);
+    await bot.seek(parseFloat(seconds) || 0);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -801,9 +800,9 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    const { source, preset, framerate, bitrate, volume } = req.body;
+    const { source, preset, framerate, bitrate, volume, replaceSessionId } = req.body;
     const safeSource = assertVideoSource(source);
-    await bot.startVideoStream(safeSource, preset, framerate, bitrate, volume);
+    await bot.startVideoStream(safeSource, preset, framerate, bitrate, volume, replaceSessionId);
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });

@@ -36,6 +36,10 @@ In the standard split-stack compose file:
 
 The all-in-one image keeps the backend and sidecar on loopback behind nginx.
 
+One video stream can use a shared sidecar at a time. Starting another stream from Video or IPTV asks you to confirm which running stream it will replace. If someone changes the stream before you confirm, the manager asks again. Existing viewers disconnect during the switch.
+
+When updating a split Docker installation, deploy the backend and sidecar images from the same release. The backend checks that the shared sidecar can verify that all previous viewer connections have closed before it starts a new stream. The all-in-one image includes both components.
+
 ## Synchronization
 
 The sidecar uses RTCP Sender Reports and adaptive pacing controls for A/V synchronization. Environment variables allow limited tuning of playout buffering, bias, queue sizes, bitrate, and encoder behavior.

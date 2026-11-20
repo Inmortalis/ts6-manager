@@ -15,6 +15,8 @@ import type { JwtPayload } from '@ts6/common';
 import fs from 'fs';
 import path from 'path';
 import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
+import { startRefreshTokenRetention } from './auth/refresh-token-retention.js';
+import { sqliteDatasourceUrl } from './utils/sqlite-datasource.js';
 import { startAuditRetention } from './audit/index.js';
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
@@ -57,7 +59,7 @@ async function main() {
   // Non-blocking diagnostic only. Production images never self-update bundled tools.
   logYtDlpVersionInBackground();
 
-  const prisma = new PrismaClient();
+  const prisma = new PrismaClient({ datasourceUrl: sqliteDatasourceUrl(config.databaseUrl) });
   const app = createApp();
   const server = createServer(app);
 
@@ -153,6 +155,7 @@ async function main() {
 
   const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
   const stopAuditRetention = startAuditRetention(prisma);
+  const stopRefreshTokenRetention = startRefreshTokenRetention(prisma);
 
   server.listen(config.port, () => {
     console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);
@@ -165,6 +168,7 @@ async function main() {
     console.log('\n[TS6 WebUI] Shutting down...');
     stopIptvAutoRefresh();
     stopAuditRetention();
+    stopRefreshTokenRetention();
     await activityJournal.stop();
 
     await voiceBotManager.stopAll();

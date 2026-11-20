@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { messageTargetName } from '@ts6/common';
 import { useBot, useUpdateBot } from '@/hooks/use-bots';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { Button } from '@/components/ui/button';
@@ -454,6 +455,7 @@ export default function BotEditor() {
   }, [connectFrom, edges]);
 
   const selectedNodeData = useMemo(() => nodes.find((n) => n.id === selectedNode), [nodes, selectedNode]);
+  const selectedMessageMode = messageTargetName(selectedNodeData?.config?.targetMode);
   const nodeTypeMeta = useMemo(() => getNodeMeta(selectedNodeData?.type || ''), [selectedNodeData]);
   const edgeRoutes = useMemo(() => edges.flatMap((edge) => {
     const srcNode = nodes.find((node) => node.id === edge.source);
@@ -895,7 +897,7 @@ export default function BotEditor() {
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Target Mode</Label>
                         <Select
-                          value={selectedNodeData.config.targetMode || 'client'}
+                          value={selectedMessageMode}
                           onValueChange={(v) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, targetMode: v } } : n))}
                         >
                           <SelectTrigger className="h-7 text-xs mt-1"><SelectValue /></SelectTrigger>
@@ -906,14 +908,14 @@ export default function BotEditor() {
                           </SelectContent>
                         </Select>
                       </div>
-                      {selectedNodeData.config.targetMode !== 'server' && (
+                      {selectedMessageMode !== 'server' && (
                         <div>
                           <Label className="text-[10px] text-muted-foreground">
-                            {selectedNodeData.config.targetMode === 'channel' ? 'Channel ID' : 'Client ID'}
+                            {selectedMessageMode === 'channel' ? 'Channel ID' : 'Client ID'}
                           </Label>
                           <Input
                             className="h-7 text-xs mt-1 font-mono-data"
-                            placeholder={selectedNodeData.config.targetMode === 'channel' ? 'Channel ID or {{event.ctid}}' : 'Client ID or {{event.clid}}'}
+                            placeholder={selectedMessageMode === 'channel' ? 'Channel ID or {{event.ctid}}' : 'Client ID or {{event.clid}}'}
                             value={selectedNodeData.config.target || ''}
                             onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, target: e.target.value } } : n))}
                           />

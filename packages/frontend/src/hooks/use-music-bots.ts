@@ -249,6 +249,8 @@ export function useStartVideoStream() {
       framerate,
       bitrate,
       volume,
+      replaceSessionId,
+      signal,
     }: {
       botId: number;
       source: string;
@@ -256,7 +258,9 @@ export function useStartVideoStream() {
       framerate?: number;
       bitrate?: string;
       volume?: number;
-    }) => musicBotsApi.startStream(botId, source, preset, framerate, bitrate, volume),
+      replaceSessionId?: string;
+      signal?: AbortSignal;
+    }) => musicBotsApi.startStream(botId, source, preset, framerate, bitrate, volume, replaceSessionId, signal),
     onSuccess: (_, { botId }) => {
       qc.invalidateQueries({ queryKey: ['video-stream-status', botId] });
       qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });

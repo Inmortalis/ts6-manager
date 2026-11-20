@@ -35,7 +35,7 @@ export const iptvApi = {
     api.get(`/iptv/playlists/${playlistId}/channels`, { params }).then((r) => r.data),
 
   // Streaming (via a music bot's video sidecar)
-  stream: (botId: number, channelId: number, preset?: string) =>
-    api.post('/iptv/stream', { botId, channelId, preset }).then((r) => r.data),
+  stream: (botId: number, channelId: number, preset?: string, replaceSessionId?: string, signal?: AbortSignal) =>
+    api.post('/iptv/stream', { botId, channelId, preset, replaceSessionId }, { signal, timeout: 120000 }).then((r) => r.data),
   stop: (botId: number) => api.post('/iptv/stop', { botId }).then((r) => r.data),
 };

@@ -90,8 +90,9 @@ export function useIptvChannels(
 
 export function useIptvStream() {
   return useMutation({
-    mutationFn: ({ botId, channelId, preset }: { botId: number; channelId: number; preset?: string }) =>
-      iptvApi.stream(botId, channelId, preset),
+    mutationFn: ({ botId, channelId, preset, replaceSessionId, signal }: {
+      botId: number; channelId: number; preset?: string; replaceSessionId?: string; signal?: AbortSignal;
+    }) => iptvApi.stream(botId, channelId, preset, replaceSessionId, signal),
   });
 }
 

@@ -259,7 +259,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    const { botId, channelId, preset } = req.body;
+    const { botId, channelId, preset, replaceSessionId } = req.body;
     if (!botId || !channelId) throw new AppError(400, 'botId and channelId are required');
 
     const channel = await prisma.iptvChannel.findUnique({ where: { id: parseInt(channelId) } });
@@ -269,10 +269,10 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
     if (!bot) throw new AppError(404, 'Music bot not found or not running');
 
     // If already streaming, just switch the source; otherwise start a stream.
-    if (bot.videoStreaming) {
+    if (bot.videoStreaming && replaceSessionId === undefined) {
       await bot.setVideoSource(channel.url);
     } else {
-      await bot.startVideoStream(channel.url, preset);
+      await bot.startVideoStream(channel.url, preset, undefined, undefined, undefined, replaceSessionId);
     }
 
     res.json({ success: true, channel: { id: channel.id, name: channel.name } });
