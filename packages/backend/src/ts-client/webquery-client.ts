@@ -30,6 +30,19 @@ const MIN_COMMAND_GAP_MS = 350;
 const FLOOD_BASE_PAUSE_MS = 60_000;
 const FLOOD_MAX_PAUSE_MS = 5 * 60_000;
 
+// TeamSpeak uses both HTTP verbs for reads and writes. An interrupted response
+// can mean that the command already took effect, so only replay known reads.
+const READ_ONLY_COMMANDS = new Set([
+  'banlist', 'channelfind', 'channelgroupclientlist', 'channelgrouplist', 'channelgrouppermlist',
+  'channelinfo', 'channellist', 'channelpermlist', 'clientdbinfo', 'clientdblist', 'clientfind',
+  'clientgetdbidfromuid', 'clientgetids', 'clientgetnamefromdbid', 'clientgetnamefromuid',
+  'clientinfo', 'clientlist', 'clientpermlist', 'complainlist', 'connectioninfo', 'hostinfo',
+  'instanceinfo', 'logview', 'messageget', 'messagelist', 'permfind', 'permidgetbyname',
+  'permissionlist', 'permoverview', 'privilegekeylist', 'servergroupclientlist', 'servergrouplist',
+  'servergrouppermlist', 'servergroupsbyclientid', 'serverinfo', 'serverlist',
+  'serverrequestconnectioninfo', 'serversnapshotcreate', 'tokenlist', 'version', 'whoami',
+]);
+
 const TRANSIENT_CODES = new Set([
   'ECONNRESET',
   'ECONNREFUSED',
@@ -91,6 +104,7 @@ function toTsApiError(error: any): never {
 }
 
 interface QueueEntry<T> {
+  command: string;
   priority: WebQueryPriority;
   enqueuedAt: number;
   op: () => Promise<T>;
@@ -168,7 +182,7 @@ export class WebQueryClient {
    * Serialization alone is not enough — TS still returns "client is flooding"
    * when channeledit/dashboard/cron fire back-to-back.
    */
-  private enqueue<T>(op: () => Promise<T>, priority: WebQueryPriority = 'normal'): Promise<T> {
+  private enqueue<T>(command: string, op: () => Promise<T>, priority: WebQueryPriority = 'normal'): Promise<T> {
     const retryAfterSeconds = this.getFloodCooldownRemainingSeconds();
     if (retryAfterSeconds > 0) {
       return Promise.reject(new TeamSpeakFloodError(retryAfterSeconds));
@@ -176,6 +190,7 @@ export class WebQueryClient {
 
     return new Promise<T>((resolve, reject) => {
       this.queue.push({
+        command,
         priority,
         enqueuedAt: Date.now(),
         op,
@@ -248,7 +263,7 @@ export class WebQueryClient {
         const idx = this.pickNextIndex();
         const item = this.queue.splice(idx, 1)[0];
         try {
-          const result = await this.withTransientRetry(item.op);
+          const result = await this.withTransientRetry(item.op, READ_ONLY_COMMANDS.has(item.command));
           this.floodStrikes = 0;
           this.floodPauseUntil = 0;
           item.resolve(result);
@@ -271,12 +286,12 @@ export class WebQueryClient {
   }
 
   /**
-   * Retry once on stale keep-alive / reset sockets.
+   * Retry read-only commands once on stale keep-alive / reset sockets.
    * Recreate the keep-alive agent before retry so hostname dials re-resolve DNS
    * instead of reusing a socket pinned to a dead container IP.
    * Never retry flood errors (that makes anti-spam worse).
    */
-  private async withTransientRetry<T>(op: () => Promise<T>): Promise<T> {
+  private async withTransientRetry<T>(op: () => Promise<T>, canRetry: boolean): Promise<T> {
     try {
       return await op();
     } catch (error: any) {
@@ -288,6 +303,7 @@ export class WebQueryClient {
       }
 
       this.recreateKeepAliveAgent();
+      if (!canRetry) toTsApiError(error);
       await new Promise((r) => setTimeout(r, 150));
       try {
         return await op();
@@ -303,7 +319,7 @@ export class WebQueryClient {
     params?: Record<string, any>,
     options?: { priority?: WebQueryPriority },
   ): Promise<any> {
-    return this.enqueue(async () => {
+    return this.enqueue(command, async () => {
       // Path is built only from sanitized sid + command; baseURL is a validated origin.
       const path = buildWebQueryPath(sid, command);
 
@@ -327,7 +343,7 @@ export class WebQueryClient {
     params?: Record<string, any>,
     options?: { priority?: WebQueryPriority },
   ): Promise<any> {
-    return this.enqueue(async () => {
+    return this.enqueue(command, async () => {
       const path = buildWebQueryPath(sid, command);
       const response = await this.http.post(path, null, {
         params: this.cleanParams(params),

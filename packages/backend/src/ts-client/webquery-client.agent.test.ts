@@ -29,7 +29,7 @@ describe('WebQueryClient keep-alive agent recreate', () => {
         throw err;
       }
       return 'ok';
-    });
+    }, true);
 
     assert.equal(result, 'ok');
     assert.equal(calls, 2);
@@ -52,7 +52,7 @@ describe('WebQueryClient keep-alive agent recreate', () => {
     await assert.rejects(
       () => (client as any).withTransientRetry(async () => {
         throw new TSApiError(2568, 'insufficient client permissions');
-      }),
+      }, true),
       (err: unknown) => err instanceof TSApiError,
     );
 
@@ -70,11 +70,38 @@ describe('WebQueryClient keep-alive agent recreate', () => {
         const err: any = new Error('read ECONNRESET');
         err.code = 'ECONNRESET';
         throw err;
-      }),
+      }, true),
       (err: unknown) => err instanceof TeamSpeakUnavailableError,
     );
 
     assert.notEqual((client as any).agent, firstAgent);
     client.destroy();
   });
+});
+
+describe('WebQuery command replay after a lost response', () => {
+  for (const method of ['execute', 'executePost'] as const) {
+    for (const command of ['sendtextmessage', 'privilegekeyadd', 'unknowncommand', 'clientlist']) {
+      it(`${method}: ${command}`, async () => {
+        const endpoint = createValidatedTsServerEndpoint('127.0.0.1', 10080, false, 10080);
+        const client = new WebQueryClient(endpoint, 'test-key');
+        let calls = 0;
+        (client as any).http.defaults.adapter = async () => {
+          if (++calls === 1) throw Object.assign(new Error('lost response'), { code: 'ECONNRESET' });
+          return { data: { status: { code: 0 }, body: [{ clid: '7' }] } };
+        };
+        try {
+          if (command === 'clientlist') {
+            assert.deepEqual(await client[method](1, command), [{ clid: '7' }]);
+            assert.equal(calls, 2);
+          } else {
+            await assert.rejects(client[method](1, command), TeamSpeakUnavailableError);
+            assert.equal(calls, 1);
+          }
+        } finally {
+          client.destroy();
+        }
+      });
+    }
+  }
 });

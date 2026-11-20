@@ -98,3 +98,25 @@ test('stale persisted SIDs reconcile before Channels requests and connection cha
   await expect(page.getByLabel('Select virtual server')).toContainText('Backup Voice');
   expect(requests.some((url) => url.includes('/servers/2/vs/1/'))).toBe(false);
 });
+
+test('renaming after a failed details request preserves the stored channel description', async ({ page, request }) => {
+  await signIn(page, request);
+  const edits: unknown[] = [];
+  await page.route('**/api/servers/1/vs/1/channels/2', async (route) => {
+    if (route.request().method() === 'PUT') {
+      edits.push(route.request().postDataJSON());
+      await route.fulfill({ json: [] });
+    } else {
+      await route.fulfill({ status: 503, json: { error: 'details unavailable' } });
+    }
+  });
+
+  await page.getByRole('button', { name: 'Edit Support' }).click();
+  const dialog = page.getByRole('dialog');
+  const nameInput = dialog.getByRole('textbox').first();
+  await expect(nameInput).toHaveValue('Support');
+  await nameInput.fill('Help desk');
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(edits).toEqual([{ channel_name: 'Help desk' }]);
+});
