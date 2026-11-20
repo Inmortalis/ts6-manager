@@ -6,6 +6,7 @@ import type { Express, Request, Response } from 'express';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
 import cron from 'node-cron';
+import { MESSAGE_TARGET_MODES, messageTargetName } from '@ts6/common';
 import type {
   FlowDefinition, FlowNode, FlowEdge,
   EventTriggerData, CronTriggerData, WebhookTriggerData, CommandTriggerData,
@@ -49,9 +50,7 @@ const BOT_ARM_FALLBACK_MS = 90_000;
  *   variable:        { operation, name, value } → { nodeType:'variable', operation, variableName: name, value }
  *   log:             { level, message } → { nodeType:'log', level, message }
  */
-function normalizeFlowData(raw: any): FlowDefinition {
-  const targetModeMap: Record<string, number> = { client: 1, channel: 2, server: 3 };
-
+export function normalizeFlowData(raw: any): FlowDefinition {
   const nodes: FlowNode[] = (raw.nodes || []).map((n: any) => {
     const nodeType: string = n.type || '';
 
@@ -92,7 +91,7 @@ function normalizeFlowData(raw: any): FlowDefinition {
       data = { actionType: 'move', label, channelId: config.channelId || config.cid || '' };
     } else if (nodeType === 'action_message') {
       type = 'action';
-      data = { actionType: 'message', label, targetMode: targetModeMap[config.targetMode] || 1, message: config.message || '', target: config.target };
+      data = { actionType: 'message', label, targetMode: MESSAGE_TARGET_MODES[messageTargetName(config.targetMode)], message: config.message || '', target: config.target };
     } else if (nodeType === 'action_poke') {
       type = 'action';
       data = { actionType: 'poke', label, message: config.message || '' };
@@ -141,7 +140,7 @@ function normalizeFlowData(raw: any): FlowDefinition {
       data = { actionType: 'httpRequest', label, url: config.url || '', method: config.method || 'GET', headers: config.headers, body: config.body, storeAs: config.storeAs || undefined };
     } else if (nodeType === 'action_afkMover') {
       type = 'action';
-      data = { actionType: 'afkMover', label, afkChannelId: config.afkChannelId || '', idleThresholdSeconds: parseInt(config.idleThresholdSeconds) || 300, exemptGroupIds: config.exemptGroupIds || '' };
+      data = { actionType: 'afkMover', label, afkChannelId: config.afkChannelId || '', idleThresholdSeconds: parseInt(config.idleThresholdSeconds) || 300, exemptGroupIds: config.exemptGroupIds || '', exemptChannelIds: config.exemptChannelIds || '' };
     } else if (nodeType === 'action_idleKicker') {
       type = 'action';
       data = { actionType: 'idleKicker', label, idleThresholdSeconds: parseInt(config.idleThresholdSeconds) || 1800, reason: config.reason || '', exemptGroupIds: config.exemptGroupIds || '' };

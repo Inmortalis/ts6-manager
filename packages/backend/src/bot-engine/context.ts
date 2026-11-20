@@ -77,6 +77,8 @@ export class ExecutionContext {
     this.exprParser = new Parser();
     // Register custom functions for expression evaluation
     this.exprParser.functions.contains = (str: string, substr: string) => String(str).includes(String(substr)) ? 1 : 0;
+    this.exprParser.functions.hasGroup = (groups: string | number, id: string | number) =>
+      String(groups).split(',').some(group => group.trim() === String(id)) ? 1 : 0;
     this.exprParser.functions.startsWith = (str: string, prefix: string) => String(str).startsWith(String(prefix)) ? 1 : 0;
     this.exprParser.functions.endsWith = (str: string, suffix: string) => String(str).endsWith(String(suffix)) ? 1 : 0;
     this.exprParser.functions.lower = (str: string) => String(str).toLowerCase();
@@ -192,7 +194,10 @@ export class ExecutionContext {
   async evaluateCondition(expression: string): Promise<boolean> {
     try {
       const scope = await this.buildExpressionScope();
-      const result = this.exprParser.evaluate(expression, scope);
+      // Older Group Protector flows stored these two expressions verbatim.
+      const legacyMembership = /^\s*contains\(\s*event\.client_servergroups\s*,\s*(['"])\d+\1\s*\)(?:\s*==\s*0)?\s*$/;
+      const condition = legacyMembership.test(expression) ? expression.replace('contains', 'hasGroup') : expression;
+      const result = this.exprParser.evaluate(condition, scope);
       return !!result;
     } catch (err: any) {
       console.warn(`[ExecutionContext] Expression evaluation failed: "${expression}" — ${err.message}`);
@@ -208,32 +213,35 @@ export class ExecutionContext {
   }
 
   async setVariable(name: string, value: string): Promise<void> {
-    const existing = await this.prisma.botVariable.findFirst({
-      where: { flowId: this.flowId, name, scope: 'flow' },
+    const key = { flowId: this.flowId, name, scope: 'flow' };
+    await this.prisma.botVariable.upsert({
+      where: { flowId_name_scope: key },
+      create: { ...key, value },
+      update: { value },
     });
+  }
 
-    if (existing) {
-      await this.prisma.botVariable.update({
-        where: { id: existing.id },
-        data: { value },
+  private async updateVariable(name: string, transform: (current: string) => string): Promise<void> {
+    const key = { flowId: this.flowId, name, scope: 'flow' };
+    await this.prisma.$transaction(async tx => {
+      // Acquire the SQLite write lock before using the old value, including on first use.
+      const row = await tx.botVariable.upsert({
+        where: { flowId_name_scope: key },
+        create: { ...key, value: '' },
+        update: { name },
+        select: { id: true, value: true },
       });
-    } else {
-      await this.prisma.botVariable.create({
-        data: { flowId: this.flowId, name, value, scope: 'flow' },
-      });
-    }
+      await tx.botVariable.update({ where: { id: row.id }, data: { value: transform(row.value) } });
+    });
   }
 
   async incrementVariable(name: string, amount: string): Promise<void> {
-    const current = await this.getVariable(name);
-    const currentNum = parseFloat(current) || 0;
     const increment = parseFloat(amount) || 0;
-    await this.setVariable(name, String(currentNum + increment));
+    await this.updateVariable(name, current => String((parseFloat(current) || 0) + increment));
   }
 
   async appendVariable(name: string, value: string): Promise<void> {
-    const current = await this.getVariable(name);
-    await this.setVariable(name, current + value);
+    await this.updateVariable(name, current => current + value);
   }
 
   setTemp(name: string, value: any): void {

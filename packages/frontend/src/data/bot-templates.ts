@@ -420,8 +420,8 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       return {
         nodes: [
           makeNode(n1, 'trigger_event', 'Client Enter', { eventName: 'notifycliententerview' }, 60, 80),
-          makeNode(n2, 'condition', 'Has Protected?', { expression: `contains(event.client_servergroups,'${cfg.protectedGroupId}')` }, 300, 80),
-          makeNode(n3, 'condition', 'Missing Auth?', { expression: `contains(event.client_servergroups,'${cfg.allowedGroupId}') == 0` }, 540, 40),
+          makeNode(n2, 'condition', 'Has Protected?', { expression: `hasGroup(event.client_servergroups,'${cfg.protectedGroupId}')` }, 300, 80),
+          makeNode(n3, 'condition', 'Missing Auth?', { expression: `hasGroup(event.client_servergroups,'${cfg.allowedGroupId}') == 0` }, 540, 40),
           actionNode,
         ],
         edges: [
@@ -450,7 +450,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       return {
         nodes: [
           makeNode(n1, 'trigger_webhook', 'Incoming Webhook', { path: cfg.path || 'server-notify', method: 'POST', secret: cfg.secret || '' }, 60, 80),
-          makeNode(n2, 'action_message', 'Broadcast Message', { targetMode: '3', message: '[Webhook] {{event.webhook_body}}' }, 340, 80),
+          makeNode(n2, 'action_message', 'Broadcast Message', { targetMode: 'server', message: '[Webhook] {{event.webhook_body}}' }, 340, 80),
         ],
         edges: [makeEdge(eid(), n1, n2)],
       };

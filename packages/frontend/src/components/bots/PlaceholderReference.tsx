@@ -67,7 +67,7 @@ export function PlaceholderReference({ open, onOpenChange }: Props) {
               <P code="{{event.client_database_id}}" desc="Database ID" example='DB-ID: {{event.client_database_id}}' />
               <P code="{{event.client_unique_identifier}}" desc="Unique ID (UID)" example='UID: {{event.client_unique_identifier}}' />
               <P code="{{event.client_type}}" desc="Type (0=User, 1=Query)" example='Condition: event.client_type == 0' />
-              <P code="{{event.client_servergroups}}" desc="Server group IDs (comma-separated)" example="contains(event.client_servergroups, '6')" />
+              <P code="{{event.client_servergroups}}" desc="Server group IDs (comma-separated)" example="hasGroup(event.client_servergroups, '6')" />
               <P code="{{event.connection_client_ip}}" desc="IP address" example='VPN check: https://api.vpn.io/{{event.connection_client_ip}}' />
               <P code="{{event.cid}}" desc="Channel the client joined" example='Condition: event.cid == 42' />
 
@@ -207,7 +207,8 @@ export function PlaceholderReference({ open, onOpenChange }: Props) {
               <p className="text-xs text-muted-foreground mb-2">
                 Functions for use in <strong>Condition</strong> node expressions. Return 0 or 1 (false/true).
               </p>
-              <P code="contains(str, sub)" desc="String contains substring?" example="contains(event.client_servergroups, '6')" />
+              <P code="hasGroup(groups, id)" desc="Is the client in this server group?" example="hasGroup(event.client_servergroups, '6')" />
+              <P code="contains(str, sub)" desc="String contains substring?" example="contains(event.msg, 'hello')" />
               <P code="startsWith(str, prefix)" desc="String starts with prefix?" example="startsWith(event.client_nickname, 'Admin')" />
               <P code="endsWith(str, suffix)" desc="String ends with suffix?" example="endsWith(event.client_nickname, 'Bot')" />
               <P code="lower(str)" desc="Convert to lowercase" example="contains(lower(event.client_nickname), 'bot')" />
@@ -218,7 +219,7 @@ export function PlaceholderReference({ open, onOpenChange }: Props) {
               <SectionHeader>Condition Examples</SectionHeader>
               <div className="text-xs text-muted-foreground space-y-1 mt-1">
                 <p><code className="text-emerald-400">event.client_type == 0</code> &mdash; Only real users (no query clients)</p>
-                <p><code className="text-emerald-400">{"contains(event.client_servergroups, '7')"}</code> &mdash; Client is in server group 7</p>
+                <p><code className="text-emerald-400">{"hasGroup(event.client_servergroups, '7')"}</code> &mdash; Client is in server group 7</p>
                 <p><code className="text-emerald-400">time.hours {'>='} 22 or time.hours {'<'} 6</code> &mdash; Nighttime only</p>
                 <p><code className="text-emerald-400">event.ctid == 42</code> &mdash; Client moved to specific channel</p>
                 <p><code className="text-emerald-400">temp.vpn.security.vpn == 1</code> &mdash; VPN detected (after HTTP request)</p>

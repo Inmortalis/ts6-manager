@@ -105,6 +105,17 @@ export interface MoveActionData {
   channelId: string;
 }
 
+export const MESSAGE_TARGET_MODES = { client: 1, channel: 2, server: 3 } as const;
+
+/** Accept names from the editor and numeric modes from older saved flows. */
+export function messageTargetName(mode: unknown): keyof typeof MESSAGE_TARGET_MODES {
+  switch (mode) {
+    case 'channel': case '2': case 2: return 'channel';
+    case 'server': case '3': case 3: return 'server';
+    default: return 'client';
+  }
+}
+
 export interface MessageActionData {
   actionType: 'message';
   label: string;
