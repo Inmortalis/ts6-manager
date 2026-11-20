@@ -9,7 +9,7 @@ import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
-import { SidecarClient } from './streaming/sidecar-client.js';
+import { SidecarClient, SidecarHttpError } from './streaming/sidecar-client.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
 import { STREAM_PRESETS, DEFAULT_PRESET, type VideoViewerInfo, type VideoStreamStatus } from './streaming/types.js';
 import { downloadVideoForStream, safeUnlinkStreamTemp, resolvePathUnderMusicDir } from './streaming/video-download.js';
@@ -21,7 +21,7 @@ interface SidecarClaim {
   id: string;
   bot: VoiceBot;
   ready: boolean;
-  stopping: boolean;
+  stop?: Promise<void>;
 }
 const claimedSidecars = new Map<string, SidecarClaim>();
 
@@ -108,6 +108,7 @@ export class VoiceBot extends EventEmitter {
   private videoWork: Promise<void> = Promise.resolve();
   private sidecarProc: SidecarProcess | null = null;
   private sidecarHttp: SidecarClient | null = null;
+  private sourceSubmitted = false;
   private _videoStreaming: boolean = false;
   private _activeStreamId: string | null = null;
   private _videoSource: string | null = null;
@@ -337,11 +338,15 @@ export class VoiceBot extends EventEmitter {
    */
   private scheduleVideoEndStop(durationSec: number): void {
     this.clearVideoEndTimer();
-    this._videoEndTimer = setTimeout(() => {
+    const claim = this.videoClaim;
+    const timer = setTimeout(() => {
+      if (this._videoEndTimer !== timer) return;
       this._videoEndTimer = null;
+      if (!claim || this.videoClaim !== claim || claim.stop) return;
       console.log(`[VoiceBot ${this.config.id}] Video ended, auto-stopping`);
       this.stopVideoStream().catch((err) => this.emit('error', err));
     }, (durationSec + 2) * 1000);
+    this._videoEndTimer = timer;
   }
 
   /**
@@ -1126,7 +1131,7 @@ export class VoiceBot extends EventEmitter {
     const previous = claimedSidecars.get(endpoint);
     if (this.videoClaim && this.videoClaim !== previous) throw new VideoSessionConflictError();
     if (previous) {
-      if (!previous.ready || previous.stopping) throw new VideoSessionConflictError();
+      if (!previous.ready || previous.stop) throw new VideoSessionConflictError();
       if (replaceSessionId !== previous.id) {
         throw new VideoSessionConflictError({
           id: previous.id, botId: previous.bot.id, botName: previous.bot.config.name,
@@ -1138,7 +1143,7 @@ export class VoiceBot extends EventEmitter {
 
     // Reserve the encoder synchronously. The old owner's cleanup cannot release this new claim.
     const stopped = previous?.bot.stopVideoStream();
-    const claim: SidecarClaim = { endpoint, id: randomUUID(), bot: this, ready: false, stopping: false };
+    const claim: SidecarClaim = { endpoint, id: randomUUID(), bot: this, ready: false };
     claimedSidecars.set(endpoint, claim);
     this.videoClaim = claim;
     await this.enqueueVideoWork(async () => {
@@ -1153,20 +1158,20 @@ export class VoiceBot extends EventEmitter {
         }
       }
       try {
-        if (claim.stopping) throw new AppError(409, 'Video stream start was cancelled');
+        if (claim.stop) throw new AppError(409, 'Video stream start was cancelled');
         await this.startClaimedVideo(claim, source, preset, framerate, bitrate, volume);
       } catch (err) {
         try {
           await this.cleanupClaimedVideo();
         } finally {
-          if (!claim.stopping) this.releaseSidecar(claim);
+          if (!claim.stop) this.releaseSidecar(claim);
         }
         throw err;
       }
     });
   }
 
-  private get videoStopping(): boolean { return this.videoClaim?.stopping ?? false; }
+  private get videoStopping(): boolean { return Boolean(this.videoClaim?.stop); }
 
   private enqueueVideoWork<T>(work: () => Promise<T>): Promise<T> {
     const result = this.videoWork.then(work);
@@ -1237,6 +1242,13 @@ export class VoiceBot extends EventEmitter {
 
     // Wait for sidecar to be healthy
     await this.sidecarHttp.waitHealthy();
+    if (sidecarUrl) {
+      try {
+        await this.sidecarHttp.clearSessionPeers();
+      } catch (err) {
+        throw new AppError(502, 'Could not verify the shared video sidecar', (err as Error).message);
+      }
+    }
     if (this.videoStopping) throw new AppError(409, 'Video stream start was cancelled');
     console.log(`[VoiceBot ${this.config.id}] Sidecar ready`);
 
@@ -1270,17 +1282,22 @@ export class VoiceBot extends EventEmitter {
 
     const resolved = await this.resolveStreamSource(source, presetConfig.height);
     if (this.videoStopping) throw new AppError(409, 'Video stream start was cancelled');
-    await this.sidecarHttp.setSource(
-      resolved.path,
-      presetConfig.width,
-      presetConfig.height,
-      effectiveFramerate,
-      effectiveBitrate,
-      this._videoStreamVolume,
-      resolved.loop,
-    );
+    this.sourceSubmitted = true;
+    try {
+      await this.sidecarHttp.setSource(
+        resolved.path, presetConfig.width, presetConfig.height, effectiveFramerate,
+        effectiveBitrate, this._videoStreamVolume, resolved.loop, Boolean(sidecarUrl),
+      );
+    } catch (err) {
+      // The empty-peer guard rejected the operation without touching the running encoder.
+      if (sidecarUrl && err instanceof SidecarHttpError && err.status === 409) {
+        this.sourceSubmitted = false;
+        throw new AppError(409, 'The video sidecar still has a peer. Retry the stream change.');
+      }
+      throw err;
+    }
 
-    if (claim.stopping) throw new AppError(409, 'Video stream start was cancelled');
+    if (claim.stop) throw new AppError(409, 'Video stream start was cancelled');
     claim.ready = true;
     this._videoStreaming = true;
     this._videoSource = source;
@@ -1292,21 +1309,22 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Stop video streaming */
-  async stopVideoStream(): Promise<void> {
+  stopVideoStream(): Promise<void> {
     const claim = this.videoClaim;
-    if (!claim || claim.stopping) return this.videoWork;
-    claim.stopping = true;
-    return this.enqueueVideoWork(async () => {
+    if (!claim) return Promise.resolve();
+    if (claim.stop) return claim.stop;
+    claim.stop = this.enqueueVideoWork(async () => {
       // A cancelled handover may have restored its predecessor before this queued stop.
       if (!claim.ready && this.videoClaim !== claim) return;
       try {
         await this.cleanupClaimedVideo(claim.ready);
       } catch (err) {
-        claim.stopping = false;
+        claim.stop = undefined;
         throw err;
       }
       this.releaseSidecar(claim);
     });
+    return claim.stop;
   }
 
   private async cleanupClaimedVideo(requireStoppedSidecar = false): Promise<void> {
@@ -1315,13 +1333,14 @@ export class VoiceBot extends EventEmitter {
     if (streamId) {
       // An external sidecar can outlive the backend connection. Confirm all peers and
       // the encoder have stopped before another bot is allowed to use it.
-      try {
-        await this.sidecarHttp?.stopSource();
-        await this.sidecarHttp?.closePeer('webui-preview');
-        for (const clid of this._viewers.keys()) await this.sidecarHttp?.closePeer(String(clid));
-      } catch (err) {
-        if (requireStoppedSidecar && !this.sidecarProc) {
-          throw new AppError(502, 'Could not release the video sidecar', 'Check the sidecar connection and retry.');
+      if (this.sourceSubmitted && this.sidecarHttp) {
+        try {
+          if (!this.sidecarProc) await this.sidecarHttp.clearSessionPeers();
+          await this.sidecarHttp.stopSource();
+        } catch (err) {
+          if (requireStoppedSidecar && !this.sidecarProc) {
+            throw new AppError(502, 'Could not release the video sidecar', (err as Error).message);
+          }
         }
       }
       for (const clid of this._viewers.keys()) {
@@ -1336,6 +1355,7 @@ export class VoiceBot extends EventEmitter {
     this._videoDurationSec = null;
     this._viewers.clear();
     this.signaling?.dispose();
+    this.sourceSubmitted = false;
     this.sidecarHttp = null;
     if (this.sidecarProc) {
       await this.sidecarProc.stop();
@@ -1469,9 +1489,9 @@ export class VoiceBot extends EventEmitter {
 
     const claim = this.videoClaim;
     const afterStart = (work: () => Promise<void>) => {
-      if (!claim || this.videoClaim !== claim || claim.stopping) return;
+      if (!claim || this.videoClaim !== claim || claim.stop) return;
       void this.enqueueVideoWork(async () => {
-        if (this.videoClaim === claim && claim.ready && !claim.stopping) await work();
+        if (this.videoClaim === claim && claim.ready && !claim.stop) await work();
       }).catch(err => this.emit('error', err));
     };
     this.signaling.on('signalingMessage', (msg: SignalingMessage) => {

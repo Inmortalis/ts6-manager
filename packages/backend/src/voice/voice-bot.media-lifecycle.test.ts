@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { VoiceBot } from './voice-bot.js';
-import { SidecarClient } from './streaming/sidecar-client.js';
+import { SidecarClient, SidecarHttpError } from './streaming/sidecar-client.js';
 import type { QueueItem } from './playlist/queue.js';
 import { musicBotRoutes } from '../routes/music-bots.routes.js';
 
@@ -122,11 +122,23 @@ test('a shared video endpoint rejects parallel starts, draining source changes b
     internal.resolveStreamSource = async (path: string) => ({ path, loop: true });
   }
   const sources: string[] = [];
+  const peers = new Set(['orphan-after-backend-restart']);
+  const closedPeers: string[] = [];
+  let pendingPeers = 0;
+  const stats = () => ({
+    source: '', videoPort: 1, audioPort: 2, supportsEmptyPeerGuard: true, pendingPeerCount: pendingPeers,
+    peerCount: peers.size, peers: Object.fromEntries([...peers].map(id => [id, { active: true, state: 'connected' }])),
+  });
+  t.mock.method(SidecarClient.prototype, 'getStats', async () => stats());
   let finishChange!: () => void;
   let beginChange!: () => void;
   const changeStarted = new Promise<void>(resolve => { beginChange = resolve; });
   t.mock.method(SidecarClient.prototype, 'waitHealthy', async () => {});
-  t.mock.method(SidecarClient.prototype, 'setSource', async (source: string) => {
+  t.mock.method(SidecarClient.prototype, 'setSource', async (source: string, _w, _h, _fps, _bitrate, _volume, _loop, requireEmpty) => {
+    if (source !== 'new') {
+      assert.equal(requireEmpty, true);
+      assert.equal(peers.size, 0);
+    }
     if (source === 'new') {
       beginChange();
       await new Promise<void>(resolve => { finishChange = resolve; });
@@ -134,10 +146,26 @@ test('a shared video endpoint rejects parallel starts, draining source changes b
     sources.push(source);
   });
   t.mock.method(SidecarClient.prototype, 'stopSource', async () => { sources.push('stop'); });
-  t.mock.method(SidecarClient.prototype, 'closePeer', async () => {});
+  t.mock.method(SidecarClient.prototype, 'closePeer', async (id: string) => {
+    closedPeers.push(id);
+    peers.delete(id);
+  });
+
+  const outdated = t.mock.method(SidecarClient.prototype, 'getStats', async () => ({ ...stats(), supportsEmptyPeerGuard: false }));
+  await assert.rejects(a.startVideoStream('unverified'), (err: any) => err.statusCode === 502 && /Update/.test(err.details));
+  outdated.mock.restore();
+  pendingPeers = 1;
+  await assert.rejects(a.startVideoStream('pending-peer'), { statusCode: 502 });
+  pendingPeers = 0;
+  const ineffective = t.mock.method(SidecarClient.prototype, 'closePeer', async () => {});
+  await assert.rejects(a.startVideoStream('still-connected'), { statusCode: 502 });
+  ineffective.mock.restore();
+  assert.deepEqual(sources, []);
   const starting = a.startVideoStream('first');
   await assert.rejects(b.startVideoStream('other'), { statusCode: 409 });
   await starting;
+  assert.deepEqual(closedPeers, ['orphan-after-backend-restart']);
+  peers.add('unrecorded-after-join-failure');
   await assert.rejects(b.startVideoStream('other'), { statusCode: 409 });
   const change = a.setVideoSource('new');
   await changeStarted;
@@ -145,8 +173,16 @@ test('a shared video endpoint rejects parallel starts, draining source changes b
   await assert.rejects(b.startVideoStream('other'), { statusCode: 409 });
   finishChange();
   await Promise.all([change, stopping]);
+  assert.deepEqual(closedPeers, ['orphan-after-backend-restart', 'unrecorded-after-join-failure']);
   await b.startVideoStream('other');
   await b.stopVideoStream();
+  assert.deepEqual(sources, ['first', 'new', 'stop', 'other', 'stop']);
+
+  const busyAtActivation = t.mock.method(SidecarClient.prototype, 'setSource', async () => {
+    throw new SidecarHttpError(409, '/source', 'A peer appeared during stream preparation');
+  });
+  await assert.rejects(a.startVideoStream('late-peer'), { statusCode: 409 });
+  busyAtActivation.mock.restore();
   assert.deepEqual(sources, ['first', 'new', 'stop', 'other', 'stop']);
 
   t.mock.method(SidecarClient.prototype, 'waitHealthy', async () => { throw new Error('unavailable'); }, { times: 1 });
@@ -163,6 +199,16 @@ test('a shared video endpoint rejects parallel starts, draining source changes b
     return true;
   });
   assert.ok(oldSession);
+  peers.add('orphan-with-failed-close');
+  const failingClose = t.mock.method(SidecarClient.prototype, 'closePeer', async () => { throw new Error('close failed'); });
+  const firstStop = b.stopVideoStream();
+  const secondStop = b.stopVideoStream();
+  assert.equal(secondStop, firstStop);
+  await Promise.all([firstStop, secondStop].map(stop => assert.rejects(stop, { statusCode: 502 })));
+  await assert.rejects(takeover(a, 'failed-peer-handover', oldSession), { statusCode: 502 });
+  assert.ok(b.videoStreaming);
+  assert.ok(!sources.includes('failed-peer-handover'));
+  failingClose.mock.restore();
   const failure = t.mock.method(SidecarClient.prototype, 'stopSource', async () => { throw new Error('unreachable'); });
   await assert.rejects(takeover(a, 'failed-handover', oldSession), { statusCode: 502 });
   failure.mock.restore();
@@ -179,7 +225,18 @@ test('a shared video endpoint rejects parallel starts, draining source changes b
     return err.statusCode === 409 && currentSession !== oldSession && err.activeSession.botId === a.id;
   });
   assert.equal(a.videoStreamStatus.source, 'confirmed');
-  await takeover(a, 'same-owner', currentSession);
+  let expireOriginal!: () => void;
+  const oldTimer = setTimeout(() => {}, 60_000).unref();
+  const timerMock = t.mock.method(globalThis, 'setTimeout', (callback: () => void) => {
+    expireOriginal = callback;
+    return oldTimer;
+  });
+  (a as any).scheduleVideoEndStop(30);
+  timerMock.mock.restore();
+  const sameOwnerStart = takeover(a, 'same-owner', currentSession);
+  expireOriginal();
+  clearTimeout(oldTimer);
+  await sameOwnerStart;
   assert.equal(a.videoStreamStatus.source, 'same-owner');
   await a.stopVideoStream();
   await assert.rejects(takeover(b, 'expired', oldSession), (err: any) => err.statusCode === 409 && !err.activeSession);

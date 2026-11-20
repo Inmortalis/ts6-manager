@@ -9,6 +9,14 @@ export interface SidecarStats {
   peerCount: number;
   peers: Record<string, { active: boolean; state: string }>;
   source: string;
+  supportsEmptyPeerGuard?: boolean;
+  pendingPeerCount?: number;
+}
+
+export class SidecarHttpError extends Error {
+  constructor(public status: number, endpoint: string, details: string) {
+    super(`Sidecar ${endpoint}: ${status} ${details}`);
+  }
 }
 
 export class SidecarClient {
@@ -59,6 +67,7 @@ export class SidecarClient {
     bitrate?: string,
     volume?: number,
     loop?: boolean,
+    requireEmptyPeers = false,
   ): Promise<void> {
     await this.call('POST', '/source', {
       source,
@@ -68,6 +77,7 @@ export class SidecarClient {
       bitrate,
       volume,
       loop,
+      ...(requireEmptyPeers && { requireEmptyPeers: true }),
     });
   }
 
@@ -77,6 +87,31 @@ export class SidecarClient {
 
   async getStats(): Promise<SidecarStats> {
     return this.call('GET', '/stats');
+  }
+
+  private async peerIdsForHandover(): Promise<string[]> {
+    const stats = await this.getStats();
+    if (stats?.supportsEmptyPeerGuard !== true) {
+      throw new Error('Update the shared video sidecar to the matching backend version.');
+    }
+    if (!Number.isSafeInteger(stats.pendingPeerCount) || stats.pendingPeerCount !== 0) {
+      throw new Error('Peer creation is still pending or cannot be verified. Retry the stream change.');
+    }
+    if (!stats.peers || typeof stats.peers !== 'object' || Array.isArray(stats.peers)) {
+      throw new Error('The sidecar did not return its peer inventory.');
+    }
+    const ids = Object.keys(stats.peers);
+    if (stats.peerCount !== ids.length) throw new Error('The sidecar returned an incomplete peer inventory.');
+    return ids;
+  }
+
+  /** Include peers that survived a backend restart or a failed signaling request. */
+  async clearSessionPeers(): Promise<void> {
+    const ids = await this.peerIdsForHandover();
+    for (const id of ids) await this.closePeer(id);
+    if (ids.length && (await this.peerIdsForHandover()).length) {
+      throw new Error('The sidecar still has open peers. Retry the stream change.');
+    }
   }
 
   async getHealth(): Promise<{ status: string; videoPort: number; audioPort: number }> {
@@ -95,7 +130,7 @@ export class SidecarClient {
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Sidecar ${endpoint}: ${res.status} ${text}`);
+      throw new SidecarHttpError(res.status, endpoint, text);
     }
     const text = await res.text();
     if (!text) return {};
